@@ -1,6 +1,6 @@
 import { VENUES, CENTER_LABEL, venueName, findVenueByName, MAX_RACES } from './venues.js';
 import * as store from './store.js';
-import { csvToRaces, racesToCSV, COLUMNS, parseCSV, normDate, normSurface } from './csv.js';
+import { csvToRaces, racesToCSV, COLUMNS, parseCSV, normDate, normSurface, parseTime } from './csv.js';
 import { FEATURES, DEFAULT_WEIGHTS, predictRace, backtest, learnAll, isFinished } from './model.js';
 import { makeDemo } from './demo.js';
 import * as ai from './ai.js';
@@ -72,6 +72,8 @@ async function loadRace() {
   $('#paddockResult').innerHTML = renderPaddockNotes();
   await renderRaceBtns();
   if (S.tab === 'data') renderData();
+  // 出走表が空なら自動で取りに行く（設定でオンのとき）
+  if (S.autoWeb && S.apiKey && !race.entries.length && !webBusy) runWeb(race.date < today() ? 'result' : 'card', false);
 }
 
 function renderTitle() {
@@ -79,7 +81,8 @@ function renderTitle() {
   $('#raceTitle').innerHTML = `<b>${CENTER_LABEL[race.center]}・${venueName(race.center, race.venue)} ${race.raceNo}R</b>
     <span>${escapeHTML(race.name || '')}</span>
     <span>${race.surface}${race.distance || ''}m・${race.condition}</span>
-    <span>${n ? `${n}頭` : '出走表なし'}</span>${isFinished(race) ? '<span class="tag">結果あり</span>' : ''}`;
+    <span>${n ? `${n}頭` : '出走表なし'}</span>${race.startTime ? `<span>${escapeHTML(race.startTime)} 発走</span>` : ''}${isFinished(race) ? '<span class="tag">結果あり</span>' : ''}
+    ${(race.sources || []).filter((u) => /^https?:/.test(u)).slice(0, 2).map((u) => `<a class="src" href="${escapeHTML(u)}" target="_blank" rel="noopener">出典</a>`).join('')}`;
 }
 
 let saveTimer = null;
@@ -196,15 +199,45 @@ $('#pasteDlg').addEventListener('close', () => {
 });
 
 // 既存の出走表に（馬番で）重ねる
-function mergeEntries(list) {
-  const byNo = new Map(race.entries.map((e) => [e.no, e]));
+function mergeEntries(list, target = race) {
+  const byNo = new Map(target.entries.map((e) => [e.no, e]));
   for (const n of list) {
-    const clean = Object.fromEntries(Object.entries(n).filter(([, v]) => v !== '' && v != null && !(typeof v === 'number' && isNaN(v))));
-    const old = byNo.get(n.no) || race.entries.find((e) => e.horse && e.horse === n.horse);
+    const clean = Object.fromEntries(Object.entries(n).filter(([, v]) => v !== '' && v != null
+      && !(typeof v === 'number' && isNaN(v)) && !(Array.isArray(v) && !v.length)));
+    const old = byNo.get(n.no) || target.entries.find((e) => e.horse && e.horse === n.horse);
     if (old) Object.assign(old, clean);
-    else race.entries.push({ ...clean });
+    else target.entries.push({ ...clean });
   }
-  race.entries.sort((a, b) => (a.no || 99) - (b.no || 99));
+  target.entries.sort((a, b) => (a.no || 99) - (b.no || 99));
+}
+
+// AI が読み取った内容（新聞の写真・Web）をレースに反映する
+function applyExtracted(target, d) {
+  const r = d.race || {};
+  if (r.name) target.name = r.name;
+  if (r.raceClass) target.raceClass = r.raceClass;
+  if (r.surface) target.surface = normSurface(r.surface);
+  if (num(r.distance)) target.distance = num(r.distance);
+  if (r.condition) target.condition = r.condition;
+  if (r.startTime) target.startTime = r.startTime;
+  const list = (d.entries || []).map((e) => {
+    const fin = String(e.finish ?? '');
+    const out = {
+      no: num(e.no), frame: num(e.frame), horse: e.horse || '', sexAge: e.sexAge || '', weight: num(e.weight),
+      jockey: e.jockey || '', trainer: e.trainer || '', odds: num(e.odds), pop: num(e.pop), marks: e.marks || '',
+      bodyWeight: num(e.bodyWeight), bodyDiff: num(e.bodyDiff),
+      finish: num(fin), time: parseTime(e.time), last3f: num(e.last3f), placeOdds: num(e.placeOdds),
+      pastRuns: (e.pastRuns || []).map((p) => ({
+        ...p, date: normDate(p.date), venueId: findVenueByName(p.venue)?.id, surface: normSurface(p.surface),
+        distance: num(p.distance), finish: num(p.finish), field: num(p.field), pop: num(p.pop),
+        last3f: num(p.last3f), last3fRank: num(p.last3fRank),
+      })).filter((p) => p.date),
+    };
+    if (/取|除|止|消/.test(fin)) out.scratched = true;
+    return out;
+  }).filter((e) => valid(e.no) || e.horse);
+  mergeEntries(list, target);
+  return list.length;
 }
 
 // ---------------- 新聞の写真 ----------------
@@ -255,25 +288,85 @@ function renderPaperResult() {
 }
 
 function applyPaper() {
-  const d = paperData;
-  const r = d.race || {};
-  if (r.name) race.name = r.name;
-  if (r.surface) race.surface = normSurface(r.surface);
-  if (r.distance) race.distance = Number(r.distance);
-  if (r.condition) race.condition = r.condition;
-  const list = d.entries.map((e) => ({
-    no: num(e.no), frame: num(e.frame), horse: e.horse || '', sexAge: e.sexAge || '', weight: num(e.weight),
-    jockey: e.jockey || '', trainer: e.trainer || '', odds: num(e.odds), pop: num(e.pop), marks: e.marks || '',
-    pastRuns: (e.pastRuns || []).map((p) => ({
-      ...p, date: normDate(p.date), venueId: findVenueByName(p.venue)?.id, surface: normSurface(p.surface),
-      distance: num(p.distance), finish: num(p.finish), field: num(p.field), pop: num(p.pop), last3f: num(p.last3f),
-    })).filter((p) => p.date),
-  })).filter((e) => valid(e.no) || e.horse);
-  mergeEntries(list);
+  const n = applyExtracted(race, paperData);
   renderCard(); renderTitle(); renderPaddockTargets(); saveRace();
-  toast(`${list.length} 頭を反映しました`);
+  toast(`${n} 頭を反映しました`);
   switchTab('card');
 }
+
+// ---------------- Web から取得 ----------------
+let webBusy = false, webStop = false;
+const webDomains = () => (S.webDomains || ai.DEFAULT_WEB_DOMAINS.join(', ')).split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+
+async function fetchOne(target, kind, usage) {
+  const d = await ai.fetchRaceFromWeb(aiSettings(), target, kind, {
+    venueLabel: venueName(target.center, target.venue), centerLabel: CENTER_LABEL[target.center],
+    domains: webDomains(), usage,
+  });
+  if (!d || d.found === false || !(d.entries || []).length) return { found: false, notes: d?.notes };
+  const n = applyExtracted(target, d);
+  target.sources = d.sources || target.sources;
+  delete target.isNew;
+  return { found: true, n, notes: d.notes };
+}
+
+function webStatus(html) { $('#webStatus').innerHTML = html; }
+
+async function runWeb(kind, all) {
+  if (webBusy) return;
+  if (!S.apiKey) { toast('設定タブで API キーを入力してください'); switchTab('settings'); return; }
+  const label = kind === 'result' ? '結果' : '出走表';
+  if (all && !confirm(`${venueName(S.center, S.venue)} ${S.date} の全レースの${label}を Web から取得します。1 レースごとに AI の利用料がかかります（目安は 1 レース十数円〜数十円。実際の額は取得後に表示します）。よろしいですか？`)) return;
+  webBusy = true; webStop = false;
+  $$('.web-btn').forEach((b) => { b.disabled = true; });
+  $('#webStopBtn').hidden = !all;
+  const usage = ai.newUsage();
+  const nos = all ? Array.from({ length: MAX_RACES }, (_, i) => i + 1) : [S.raceNo];
+  const at = { date: S.date, center: S.center, venue: S.venue };
+  let ok = 0, miss = 0;
+  try {
+    for (const no of nos) {
+      if (webStop) break;
+      const id = store.raceId(at.date, at.center, at.venue, no);
+      const isShown = () => race && race.id === id;
+      const target = isShown() ? race : ((await store.getRace(id)) || {
+        id, date: at.date, center: at.center, venue: at.venue, raceNo: no, name: '',
+        surface: at.center === 'NAR' ? 'ダ' : '芝', distance: 0, condition: '良', raceClass: '', entries: [], isNew: true,
+      });
+      webStatus(`<span class="spin"></span>${no}R の${label}を取得中…（1 レース 30 秒〜2 分。ここまでの AI 利用料 約 ${ai.costYen(S.aiModel, usage)} 円）`);
+      try {
+        const r = await fetchOne(target, kind, usage);
+        if (r.found) {
+          ok++;
+          await store.putRace(target); invalidate();
+          if (isShown()) { renderCard(); renderTitle(); renderPaddockTargets(); }
+          await renderRaceBtns();
+        } else {
+          miss++;
+          // 最初の 2 レースが見つからなければ、その日は開催なしとみなす
+          if (all && ok === 0 && miss >= 2) break;
+          if (!all) toast(`見つかりませんでした${r.notes ? `：${r.notes}` : ''}`, 5000);
+        }
+      } catch (e) {
+        miss++;
+        if (!all) throw e;
+      }
+    }
+    webStatus(`${label}：${ok} レース取得${miss ? `・${miss} レース取得できず` : ''}${webStop ? '（中止）' : ''}。AI 利用料の目安 約 ${ai.costYen(S.aiModel, usage)} 円`);
+  } catch (e) {
+    webStatus(`エラー：${escapeHTML(e.message)}`);
+  } finally {
+    webBusy = false;
+    $$('.web-btn').forEach((b) => { b.disabled = false; });
+    $('#webStopBtn').hidden = true;
+  }
+}
+
+$('#webCardBtn').addEventListener('click', () => runWeb('card', false));
+$('#webResultBtn').addEventListener('click', () => runWeb('result', false));
+$('#webCardAllBtn').addEventListener('click', () => runWeb('card', true));
+$('#webResultAllBtn').addEventListener('click', () => runWeb('result', true));
+$('#webStopBtn').addEventListener('click', () => { webStop = true; webStatus('このレースが終わったら止めます…'); });
 
 // ---------------- パドック ----------------
 function renderPaddockTargets() {
@@ -386,7 +479,7 @@ function showHorse(name, pr) {
     ${hist.length || paper.length ? `<div class="table-wrap"><table class="mini"><thead><tr><th>日付</th><th>場</th><th>コース</th><th>馬場</th><th>着順</th></tr></thead><tbody>
     ${hist.map((h) => `<tr><td>${h.date}</td><td>${escapeHTML(venueName('JRA', h.venue) !== h.venue ? venueName('JRA', h.venue) : venueName('NAR', h.venue))}</td><td>${h.surface}${h.distance}</td><td>${h.condition}</td><td>${h.finish}</td></tr>`).join('')}
     ${paper.map((h) => `<tr class="paper"><td>${h.date}</td><td>${escapeHTML(h.venue || '')}</td><td>${h.surface || ''}${h.distance || ''}</td><td>${h.condition || ''}</td><td>${h.finish ?? ''}${h.field ? `/${h.field}` : ''}</td></tr>`).join('')}
-    </tbody></table></div>${paper.length ? '<p class="hint">色付きの行は新聞から読み取った過去走</p>' : ''}` : '<p class="hint">過去の出走データがありません（初出走、またはデータ未登録）。</p>'}`;
+    </tbody></table></div>${paper.length ? '<p class="hint">色付きの行は新聞・Web から読み取った過去走</p>' : ''}` : '<p class="hint">過去の出走データがありません（初出走、またはデータ未登録）。</p>'}`;
   $('#horseDlg').showModal();
 }
 
@@ -524,10 +617,14 @@ function renderSettings() {
   $('#apiKey').value = S.apiKey || '';
   $('#aiModel').value = S.aiModel;
   $('#aiEffort').value = S.aiEffort;
+  $('#webDomains').value = S.webDomains || ai.DEFAULT_WEB_DOMAINS.join(', ');
+  $('#autoWeb').checked = !!S.autoWeb;
 }
 $('#apiKey').addEventListener('change', () => { S.apiKey = $('#apiKey').value.trim(); save(); toast('保存しました'); });
 $('#aiModel').addEventListener('change', () => { S.aiModel = $('#aiModel').value; save(); });
 $('#aiEffort').addEventListener('change', () => { S.aiEffort = $('#aiEffort').value; save(); });
+$('#webDomains').addEventListener('change', () => { S.webDomains = $('#webDomains').value.trim(); save(); toast('保存しました'); });
+$('#autoWeb').addEventListener('change', () => { S.autoWeb = $('#autoWeb').checked; save(); });
 
 // ---------------- タブ・選択 ----------------
 function switchTab(t) {

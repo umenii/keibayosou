@@ -148,7 +148,8 @@ function mergePastRuns(hist, pastRuns, beforeDate) {
     const field = valid(r.field) && r.field > 1 ? r.field : 14;
     extra.push({
       date: r.date, venue: r.venueId || r.venue, surface: r.surface === 'ダ' ? 'ダ' : '芝', distance: r.distance || 0,
-      condition: r.condition || '良', fs: Math.max(0, 1 - (r.finish - 1) / (field - 1)), l3s: NaN, finish: r.finish,
+      condition: r.condition || '良', fs: Math.max(0, 1 - (r.finish - 1) / (field - 1)),
+      l3s: valid(r.last3fRank) ? Math.max(0, 1 - (r.last3fRank - 1) / (field - 1)) : NaN, finish: r.finish,
     });
   }
   if (!extra.length) return hist;

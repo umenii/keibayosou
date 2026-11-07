@@ -7,7 +7,7 @@
 <meta name="description" content="出走表・競馬新聞の写真・パドックの写真や動画と、過去のレース結果から予想する競馬予想ツール">
 <meta name="apple-mobile-web-app-title" content="競馬予想">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=20261107-1">
+<link rel="stylesheet" href="style.css?v=20261107-2">
 </head>
 <body>
 <header class="topbar">
@@ -50,6 +50,18 @@
 <main>
   <!-- 出走表 -->
   <section class="tab card" id="tab-card">
+    <div class="web-box">
+      <div class="btn-row">
+        <b>Web から取得</b>
+        <button type="button" class="web-btn primary" id="webCardBtn">出走表・近走</button>
+        <button type="button" class="web-btn" id="webResultBtn">結果</button>
+        <span class="sep"></span>
+        <button type="button" class="web-btn ghost" id="webCardAllBtn">この日の全レースの出走表</button>
+        <button type="button" class="web-btn ghost" id="webResultAllBtn">この日の全レースの結果</button>
+        <button type="button" class="ghost danger" id="webStopBtn" hidden>中止</button>
+      </div>
+      <div class="status" id="webStatus">AI が競馬サイトを調べ、出走表と各馬の近 5 走（馬柱）、レース後は着順・オッズ・払戻を自動で入れます。</div>
+    </div>
     <div class="race-info">
       <label class="field">レース名<input id="raceName" placeholder="例：3歳未勝利"></label>
       <label class="field">芝・ダ<select id="raceSurface"><option>芝</option><option>ダ</option><option>障</option></select></label>
@@ -165,6 +177,10 @@
         <option value="low">速い</option><option value="medium">標準</option><option value="high">丁寧</option>
       </select></label>
     </div>
+    <h2>Web から取得</h2>
+    <label class="field wide">参照してよいサイト（ドメインをカンマ区切り）<input id="webDomains" autocomplete="off"></label>
+    <p class="hint">AI はここに書いたサイトだけを検索・閲覧します。各サイトの利用規約を確認し、個人で楽しむ範囲で使ってください。ボタンを押したときだけ、そのレースのページを数ページ読みます。</p>
+    <label class="check"><input type="checkbox" id="autoWeb"> 出走表が空のレースを選んだら自動で取得する（過去の日付は結果を取得）</label>
     <h2>注意</h2>
     <p class="hint">このツールの予想は過去データから計算した目安です。的中や利益を保証するものではありません。馬券は余裕のある範囲で楽しんでください。</p>
   </section>
@@ -188,6 +204,6 @@
 </dialog>
 
 <div class="toast" id="toast"></div>
-<script type="module" src="js/app.js?v=20261107-1"></script>
+<script type="module" src="js/app.js?v=20261107-2"></script>
 </body>
 </html>

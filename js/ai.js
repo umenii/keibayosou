@@ -1,4 +1,4 @@
-// 写真・動画の読み取り（Claude API）
+// 写真・動画の読み取り（Claude API。任意・有料）
 // 競馬新聞の写真から出走表と印を読み取り、パドックの写真・動画から馬の状態を評価する。
 // API キーはこの端末のブラウザ内（localStorage）にだけ保存され、Anthropic の API にだけ送られる。
 
@@ -178,70 +178,3 @@ ${CRITERIA}
   return Array.isArray(r) ? r : (r.horses || [r]);
 }
 
-// ---- Web からレース情報を取得 ----
-export const DEFAULT_WEB_DOMAINS = ['netkeiba.com', 'jra.go.jp', 'keiba.go.jp'];
-
-// netkeiba の競馬場コード（URL の候補を作るため）
-const NK_JRA = { sapporo: '01', hakodate: '02', fukushima: '03', niigata: '04', tokyo: '05', nakayama: '06', chukyo: '07', kyoto: '08', hanshin: '09', kokura: '10' };
-const NK_NAR = { obihiro: '65', monbetsu: '30', morioka: '35', mizusawa: '36', urawa: '42', funabashi: '43', ooi: '44', kawasaki: '45', kanazawa: '46', kasamatsu: '47', nagoya: '48', sonoda: '50', himeji: '51', kochi: '54', saga: '55' };
-
-function candidateUrls(race, kind, domains) {
-  if (!domains.some((d) => 'netkeiba.com'.endsWith(d) || d.endsWith('netkeiba.com'))) return [];
-  const ymd = race.date.replace(/-/g, '');
-  const rr = String(race.raceNo).padStart(2, '0');
-  const page = kind === 'result' ? 'result' : 'shutuba_past';
-  if (race.center === 'NAR' && NK_NAR[race.venue]) {
-    const id = `${ymd.slice(0, 4)}${NK_NAR[race.venue]}${ymd.slice(4)}${rr}`;
-    return [`https://nar.netkeiba.com/race/${page}.html?race_id=${id}`];
-  }
-  if (race.center === 'JRA' && NK_JRA[race.venue]) {
-    return [
-      `https://race.netkeiba.com/top/race_list_sub.html?kaisai_date=${ymd}`,
-      `（race_id は 年4桁 + 場コード${NK_JRA[race.venue]} + 回2桁 + 日目2桁 + レース番号2桁。一覧ページのリンクで確認）`,
-      `https://race.netkeiba.com/race/${page}.html?race_id=<race_id>`,
-    ];
-  }
-  return [];
-}
-
-const WEB_SYSTEM = `あなたは競馬のレース情報をウェブページから正確に書き写すアシスタントです。
-ページに書かれている値だけを使い、見つからない値は null にしてください。推測で埋めないでください。
-ログインが必要なページや有料のページは使わないでください。
-作業が終わったら、最後に JSON だけを \`\`\`json のコードブロックで出力してください。`;
-
-// kind: 'card'（出走表と各馬の近走） | 'result'（着順・確定オッズ・払戻）
-export async function fetchRaceFromWeb(settings, race, kind, { venueLabel, centerLabel, domains, usage } = {}) {
-  const doms = (domains && domains.length ? domains : DEFAULT_WEB_DOMAINS);
-  const urls = candidateUrls(race, kind, doms);
-  const [y, m, d] = race.date.split('-').map(Number);
-  const what = kind === 'result'
-    ? 'このレースの結果（全馬の着順・タイム・上がり3F・確定単勝オッズ・人気・馬体重、複勝の払戻）'
-    : 'このレースの出馬表（全出走馬）と、各馬の近走成績（馬柱。新しい順に最大5走）';
-  const text = `${centerLabel}競馬 ${venueLabel} ${y}年${m}月${d}日 ${race.raceNo}R の${what}を、ウェブで調べて書き写してください。
-${urls.length ? `まず次のページを試してください（URL は候補です。開けない・違うレースのときは検索してください）:\n${urls.join('\n')}\n` : ''}
-日付・競馬場・レース番号が一致するページだけを使ってください。そのレースが見つからない（開催がない等）ときは "found": false にしてください。
-
-出力する JSON の形:
-{
-  "found": true,
-  "race": { "date": "YYYY-MM-DD", "venue": "競馬場名", "raceNo": 数値, "name": "レース名", "raceClass": "クラス",
-            "surface": "芝|ダ|障", "distance": 数値, "condition": "良|稍重|重|不良 または null", "startTime": "HH:MM" },
-  "entries": [
-    { "no": 馬番, "frame": 枠番, "horse": "馬名", "sexAge": "牡3 など", "weight": 斤量, "jockey": "騎手", "trainer": "調教師",
-      "bodyWeight": 馬体重, "bodyDiff": 増減, "odds": 単勝オッズ, "pop": 人気,
-${kind === 'result'
-    ? `      "finish": 着順（数値。取消・除外・中止は "取消" などの文字）, "time": "1:34.5", "last3f": 上がり3F秒, "placeOdds": 複勝の払戻倍率（3着以内の馬だけ。100円あたりの払戻 ÷ 100） }`
-    : `      "pastRuns": [ { "date": "YYYY-MM-DD", "venue": "競馬場名", "surface": "芝|ダ|障", "distance": 数値, "condition": "良など",
-                      "finish": 着順, "field": 頭数, "pop": 人気, "jockey": "騎手", "last3f": 上がり3F秒, "last3fRank": 上がり順位 } ] }`}
-  ],
-  "sources": ["使ったページの URL"],
-  "notes": "取れなかった項目など（短く）"
-}`;
-  const tools = [
-    { type: 'web_fetch_20260209', name: 'web_fetch', allowed_domains: doms, max_uses: 8, max_content_tokens: 120000 },
-    { type: 'web_search_20260209', name: 'web_search', allowed_domains: doms, max_uses: 4 },
-  ];
-  return ask(settings, text, WEB_SYSTEM, { tools, usage });
-}
-
-export { newUsage };

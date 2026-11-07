@@ -4,6 +4,7 @@ import { csvToRaces, racesToCSV, COLUMNS, parseCSV, normDate, normSurface, parse
 import { FEATURES, DEFAULT_WEIGHTS, predictRace, backtest, learnAll, isFinished } from './model.js';
 import { makeDemo } from './demo.js';
 import * as ai from './ai.js';
+import * as remote from './remote.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -16,7 +17,7 @@ const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getT
 // ---------------- 状態 ----------------
 const S = Object.assign({
   center: 'JRA', venue: 'tokyo', date: today(), raceNo: 1, mode: 'hit', tab: 'card',
-  weights: { ...DEFAULT_WEIGHTS }, apiKey: '', aiModel: ai.DEFAULT_MODEL, aiEffort: 'medium',
+  weights: { ...DEFAULT_WEIGHTS }, apiKey: '', ghRepo: '', ghToken: '', ghAuto: true, aiModel: ai.DEFAULT_MODEL, aiEffort: 'medium',
 }, store.loadSettings());
 S.weights = { ...DEFAULT_WEIGHTS, ...S.weights };
 let race = null;        // 表示中のレース
@@ -72,9 +73,115 @@ async function loadRace() {
   $('#paddockResult').innerHTML = renderPaddockNotes();
   await renderRaceBtns();
   if (S.tab === 'data') renderData();
-  // 出走表が空なら自動で取りに行く（設定でオンのとき）
-  if (S.autoWeb && S.apiKey && !race.entries.length && !webBusy) runWeb(race.date < today() ? 'result' : 'card', false);
+  // 集めたデータを自動で読み込む
+  if (S.ghAuto && remote.isConfigured(S) && needsRemote(race.date)) {
+    await loadRemoteDate(race.date, { quiet: true });
+  }
 }
+
+// ---------------- 無料データ（GitHub） ----------------
+const remoteLoaded = new Map(); // 日付 → 読み込んだ時刻
+function needsRemote(date) {
+  const t = remoteLoaded.get(date);
+  // 今日・明日は 10 分ごと、それ以外は 1 回だけ
+  return !t || (date >= today() && Date.now() - t > 10 * 60 * 1000);
+}
+function ghStatus(html) { $('#ghStatus').innerHTML = html; }
+
+async function loadRemoteDate(date, { quiet } = {}) {
+  if (!remote.isConfigured(S)) {
+    if (!quiet) { toast('設定タブで GitHub のリポジトリとトークンを入力してください'); switchTab('settings'); }
+    return 0;
+  }
+  ghStatus(`<span class="spin"></span>${date} のデータを読み込み中…`);
+  try {
+    const races = await remote.loadDate(S, date);
+    remoteLoaded.set(date, Date.now());
+    if (!races.length) {
+      ghStatus(`${date} のデータはまだありません。${date >= today() ? '出馬表は前日〜当日朝に集まります。「今すぐ集める」も使えます。' : '「過去データ」タブの「過去の結果を集める」で集められます。'}`);
+      return 0;
+    }
+    await store.mergeRaces(races);
+    invalidate();
+    const shown = races.find((r) => r.id === race.id);
+    if (shown) {
+      race = await store.getRace(race.id);
+      renderTitle(); renderCard(); renderPaddockTargets();
+    }
+    await renderRaceBtns();
+    const upd = races.map((r) => r.remoteUpdated).filter(Boolean).sort().pop() || '';
+    ghStatus(`${date}：${races.length} レースを読み込みました${upd ? `（${upd.replace('T', ' ').slice(0, 16)} 時点）` : ''}`);
+    if (S.tab === 'data') renderData();
+    return races.length;
+  } catch (e) {
+    ghStatus(`エラー：${escapeHTML(e.message)}`);
+    return 0;
+  }
+}
+
+$('#ghLoadBtn').addEventListener('click', () => { remoteLoaded.delete(S.date); loadRemoteDate(S.date); });
+
+async function triggerAndWait(params, label, statusFn) {
+  if (!remote.isConfigured(S)) { toast('設定タブで GitHub のリポジトリとトークンを入力してください'); switchTab('settings'); return; }
+  try {
+    await remote.triggerCollect(S, params);
+    statusFn(`<span class="spin"></span>${label}を GitHub に頼みました。数分〜十数分かかります（終わったら自動で読み込みます）…`);
+  } catch (e) {
+    statusFn(`エラー：${escapeHTML(e.message)}。トークンに「Actions：読み取りと書き込み」の権限が必要です。`);
+    return;
+  }
+  // 終わるまで 30 秒ごとに確認（最大 40 分）
+  const started = Date.now();
+  await new Promise((r) => setTimeout(r, 15000));
+  while (Date.now() - started < 40 * 60 * 1000) {
+    let run = null;
+    try { run = await remote.lastRun(S); } catch { /* 権限がなければ確認しない */ }
+    if (!run) break;
+    if (run.status === 'completed') {
+      statusFn(run.conclusion === 'success' ? `${label}が終わりました。` : `${label}が失敗しました（<a href="${run.url}" target="_blank" rel="noopener">記録を見る</a>）`);
+      return run.conclusion === 'success';
+    }
+    await new Promise((r) => setTimeout(r, 30000));
+  }
+  statusFn(`${label}の状況を確認できませんでした。しばらくしてから「最新データを読み込む」を押してください。`);
+  return false;
+}
+
+$('#ghCollectBtn').addEventListener('click', async () => {
+  const d = S.date;
+  const ok = await triggerAndWait({ dates: d, horses: true }, `${d} の収集`, ghStatus);
+  if (ok) { remoteLoaded.delete(d); await loadRemoteDate(d); }
+});
+
+$('#ghAllBtn').addEventListener('click', async () => {
+  if (!remote.isConfigured(S)) { toast('設定タブで GitHub のリポジトリとトークンを入力してください'); switchTab('settings'); return; }
+  const st = (h) => { $('#ghAllStatus').innerHTML = h; };
+  try {
+    const idx = await remote.loadIndex(S);
+    const dates = Object.keys(idx.dates || {}).sort();
+    let n = 0;
+    for (let i = 0; i < dates.length; i++) {
+      st(`<span class="spin"></span>${dates[i]} を読み込み中（${i + 1}/${dates.length}）…`);
+      const races = await remote.loadDate(S, dates[i]);
+      if (races.length) { await store.mergeRaces(races); n += races.length; }
+      remoteLoaded.set(dates[i], Date.now());
+    }
+    invalidate();
+    st(`${dates.length} 日分・${n} レースを読み込みました`);
+    renderData(); loadRace();
+  } catch (e) { st(`エラー：${escapeHTML(e.message)}`); }
+});
+
+$('#ghBackfillBtn').addEventListener('click', async () => {
+  const from = $('#ghFrom').value, to = $('#ghTo').value || from;
+  if (!from) { toast('集める期間の開始日を選んでください'); return; }
+  const days = (new Date(to) - new Date(from)) / 86400000 + 1;
+  if (days < 1 || days > 20) { toast('一度に集められるのは 20 日分までです'); return; }
+  if (!confirm(`${from}〜${to}（${days} 日）の結果を Yahoo!スポーツナビ 競馬から集めます。サイトに負担をかけないようゆっくり集めるので、1 日分あたり 2〜4 分かかります。よろしいですか？`)) return;
+  const st = (h) => { $('#ghAllStatus').innerHTML = h; };
+  const ok = await triggerAndWait({ from, to, horses: false }, `${from}〜${to} の収集`, st);
+  if (ok) $('#ghAllBtn').click();
+});
 
 function renderTitle() {
   const n = race.entries.filter((e) => !e.scratched).length;
@@ -293,80 +400,6 @@ function applyPaper() {
   toast(`${n} 頭を反映しました`);
   switchTab('card');
 }
-
-// ---------------- Web から取得 ----------------
-let webBusy = false, webStop = false;
-const webDomains = () => (S.webDomains || ai.DEFAULT_WEB_DOMAINS.join(', ')).split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
-
-async function fetchOne(target, kind, usage) {
-  const d = await ai.fetchRaceFromWeb(aiSettings(), target, kind, {
-    venueLabel: venueName(target.center, target.venue), centerLabel: CENTER_LABEL[target.center],
-    domains: webDomains(), usage,
-  });
-  if (!d || d.found === false || !(d.entries || []).length) return { found: false, notes: d?.notes };
-  const n = applyExtracted(target, d);
-  target.sources = d.sources || target.sources;
-  delete target.isNew;
-  return { found: true, n, notes: d.notes };
-}
-
-function webStatus(html) { $('#webStatus').innerHTML = html; }
-
-async function runWeb(kind, all) {
-  if (webBusy) return;
-  if (!S.apiKey) { toast('設定タブで API キーを入力してください'); switchTab('settings'); return; }
-  const label = kind === 'result' ? '結果' : '出走表';
-  if (all && !confirm(`${venueName(S.center, S.venue)} ${S.date} の全レースの${label}を Web から取得します。1 レースごとに AI の利用料がかかります（目安は 1 レース十数円〜数十円。実際の額は取得後に表示します）。よろしいですか？`)) return;
-  webBusy = true; webStop = false;
-  $$('.web-btn').forEach((b) => { b.disabled = true; });
-  $('#webStopBtn').hidden = !all;
-  const usage = ai.newUsage();
-  const nos = all ? Array.from({ length: MAX_RACES }, (_, i) => i + 1) : [S.raceNo];
-  const at = { date: S.date, center: S.center, venue: S.venue };
-  let ok = 0, miss = 0;
-  try {
-    for (const no of nos) {
-      if (webStop) break;
-      const id = store.raceId(at.date, at.center, at.venue, no);
-      const isShown = () => race && race.id === id;
-      const target = isShown() ? race : ((await store.getRace(id)) || {
-        id, date: at.date, center: at.center, venue: at.venue, raceNo: no, name: '',
-        surface: at.center === 'NAR' ? 'ダ' : '芝', distance: 0, condition: '良', raceClass: '', entries: [], isNew: true,
-      });
-      webStatus(`<span class="spin"></span>${no}R の${label}を取得中…（1 レース 30 秒〜2 分。ここまでの AI 利用料 約 ${ai.costYen(S.aiModel, usage)} 円）`);
-      try {
-        const r = await fetchOne(target, kind, usage);
-        if (r.found) {
-          ok++;
-          await store.putRace(target); invalidate();
-          if (isShown()) { renderCard(); renderTitle(); renderPaddockTargets(); }
-          await renderRaceBtns();
-        } else {
-          miss++;
-          // 最初の 2 レースが見つからなければ、その日は開催なしとみなす
-          if (all && ok === 0 && miss >= 2) break;
-          if (!all) toast(`見つかりませんでした${r.notes ? `：${r.notes}` : ''}`, 5000);
-        }
-      } catch (e) {
-        miss++;
-        if (!all) throw e;
-      }
-    }
-    webStatus(`${label}：${ok} レース取得${miss ? `・${miss} レース取得できず` : ''}${webStop ? '（中止）' : ''}。AI 利用料の目安 約 ${ai.costYen(S.aiModel, usage)} 円`);
-  } catch (e) {
-    webStatus(`エラー：${escapeHTML(e.message)}`);
-  } finally {
-    webBusy = false;
-    $$('.web-btn').forEach((b) => { b.disabled = false; });
-    $('#webStopBtn').hidden = true;
-  }
-}
-
-$('#webCardBtn').addEventListener('click', () => runWeb('card', false));
-$('#webResultBtn').addEventListener('click', () => runWeb('result', false));
-$('#webCardAllBtn').addEventListener('click', () => runWeb('card', true));
-$('#webResultAllBtn').addEventListener('click', () => runWeb('result', true));
-$('#webStopBtn').addEventListener('click', () => { webStop = true; webStatus('このレースが終わったら止めます…'); });
 
 // ---------------- パドック ----------------
 function renderPaddockTargets() {
@@ -617,14 +650,29 @@ function renderSettings() {
   $('#apiKey').value = S.apiKey || '';
   $('#aiModel').value = S.aiModel;
   $('#aiEffort').value = S.aiEffort;
-  $('#webDomains').value = S.webDomains || ai.DEFAULT_WEB_DOMAINS.join(', ');
-  $('#autoWeb').checked = !!S.autoWeb;
+  $('#ghRepo').value = S.ghRepo || '';
+  $('#ghToken').value = S.ghToken || '';
+  $('#ghAuto').checked = S.ghAuto !== false;
 }
 $('#apiKey').addEventListener('change', () => { S.apiKey = $('#apiKey').value.trim(); save(); toast('保存しました'); });
 $('#aiModel').addEventListener('change', () => { S.aiModel = $('#aiModel').value; save(); });
 $('#aiEffort').addEventListener('change', () => { S.aiEffort = $('#aiEffort').value; save(); });
-$('#webDomains').addEventListener('change', () => { S.webDomains = $('#webDomains').value.trim(); save(); toast('保存しました'); });
-$('#autoWeb').addEventListener('change', () => { S.autoWeb = $('#autoWeb').checked; save(); });
+$('#ghRepo').addEventListener('change', () => { S.ghRepo = $('#ghRepo').value.trim(); save(); remoteLoaded.clear(); });
+$('#ghToken').addEventListener('change', () => { S.ghToken = $('#ghToken').value.trim(); save(); remoteLoaded.clear(); toast('保存しました'); });
+$('#ghAuto').addEventListener('change', () => { S.ghAuto = $('#ghAuto').checked; save(); });
+$('#ghTestBtn').addEventListener('click', async () => {
+  S.ghRepo = $('#ghRepo').value.trim(); S.ghToken = $('#ghToken').value.trim(); save();
+  const st = $('#ghTestStatus');
+  if (!remote.isConfigured(S)) { st.textContent = 'リポジトリ（例 umenii/keiba）とトークンを入力してください'; return; }
+  st.innerHTML = '<span class="spin"></span>確認中…';
+  try {
+    const idx = await remote.loadIndex(S);
+    const dates = Object.keys(idx.dates || {}).sort();
+    let run = '';
+    try { const r = await remote.lastRun(S); if (r) run = `・直近の収集 ${r.at.replace('T', ' ').slice(0, 16)}（${r.conclusion || r.status}）`; } catch { run = '・収集の状況は見られません（Actions の権限なし）'; }
+    st.textContent = `接続できました：${dates.length} 日分のデータ${dates.length ? `（${dates[0]}〜${dates[dates.length - 1]}）` : ''}${run}`;
+  } catch (e) { st.textContent = `接続できません：${e.message}`; }
+});
 
 // ---------------- タブ・選択 ----------------
 function switchTab(t) {

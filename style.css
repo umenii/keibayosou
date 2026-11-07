@@ -169,3 +169,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 a.src { font-size: 12px; }
 label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; margin: 8px 0; }
 label.check input { min-height: 0; width: 18px; height: 18px; }
+
+details.ai-fetch { margin-top: 6px; font-size: 13px; }
+details.ai-fetch summary { cursor: pointer; color: var(--muted); }
+details.ai-fetch .btn-row { margin-top: 6px; }

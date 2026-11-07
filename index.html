@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>競馬予想ノート</title>
+<meta name="description" content="出走表・競馬新聞の写真・パドックの写真や動画と、過去のレース結果から予想する競馬予想ツール">
+<meta name="apple-mobile-web-app-title" content="競馬予想">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css?v=20261107-1">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">◎</div>
+    <div>
+      <h1>競馬予想ノート</h1>
+      <span class="sub">過去の結果 × 新聞 × パドックで予想</span>
+    </div>
+  </div>
+</header>
+
+<section class="selector card">
+  <div class="sel-row">
+    <div class="seg" id="centerSeg" role="group" aria-label="中央・地方">
+      <button type="button" data-center="JRA">中央</button>
+      <button type="button" data-center="NAR">地方</button>
+    </div>
+    <label class="field">競馬場
+      <select id="venueSel"></select>
+    </label>
+    <label class="field">開催日
+      <input type="date" id="dateInp">
+    </label>
+    <button type="button" class="ghost small" id="todayBtn">今日</button>
+  </div>
+  <div class="race-btns" id="raceBtns" role="group" aria-label="レース"></div>
+  <div class="race-title" id="raceTitle"></div>
+</section>
+
+<nav class="tabs" id="tabs">
+  <button type="button" data-tab="card" class="on">出走表</button>
+  <button type="button" data-tab="media">新聞・パドック</button>
+  <button type="button" data-tab="predict">予想</button>
+  <button type="button" data-tab="data">過去データ</button>
+  <button type="button" data-tab="verify">検証・学習</button>
+  <button type="button" data-tab="settings">設定</button>
+</nav>
+
+<main>
+  <!-- 出走表 -->
+  <section class="tab card" id="tab-card">
+    <div class="race-info">
+      <label class="field">レース名<input id="raceName" placeholder="例：3歳未勝利"></label>
+      <label class="field">芝・ダ<select id="raceSurface"><option>芝</option><option>ダ</option><option>障</option></select></label>
+      <label class="field">距離(m)<input id="raceDist" type="number" inputmode="numeric" step="100" min="800" max="4000"></label>
+      <label class="field">馬場<select id="raceCond"><option>良</option><option>稍重</option><option>重</option><option>不良</option></select></label>
+    </div>
+    <div class="table-wrap">
+      <table class="entries" id="entryTable">
+        <thead><tr>
+          <th>枠</th><th>馬番</th><th class="w-name">馬名</th><th>性齢</th><th>斤量</th><th>騎手</th><th>調教師</th>
+          <th>馬体重</th><th>増減</th><th>単勝</th><th>人気</th><th title="新聞・記者の印（例 ◎○-△）">印</th><th title="パドックの見た目 A〜E">パドック</th><th>着順</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="btn-row">
+      <button type="button" id="addRowBtn">＋ 1 頭追加</button>
+      <button type="button" id="pasteBtn" class="ghost">表を貼り付けて取り込む</button>
+      <span class="spacer"></span>
+      <button type="button" id="delRaceBtn" class="ghost danger">このレースを削除</button>
+    </div>
+    <p class="hint">入力は自動で保存されます。印の欄は新聞の印を左から並べて入力（例：<code>◎○-△</code>）。レースが終わったら着順を入れると、次の予想の学習データになります。取消は着順に「取」。</p>
+  </section>
+
+  <!-- 新聞・パドック -->
+  <section class="tab card hidden" id="tab-media">
+    <h2>競馬新聞の写真から読み取る</h2>
+    <p class="hint">新聞の馬柱・出馬表を撮った写真（複数可）を選ぶと、AI が馬名・騎手・オッズ・記者の印・過去走を読み取り、出走表に反映します。</p>
+    <div class="btn-row">
+      <label class="file-btn">写真を選ぶ<input type="file" id="paperFiles" accept="image/*" multiple hidden></label>
+      <button type="button" id="paperRunBtn" disabled>読み取る</button>
+      <span class="status" id="paperStatus"></span>
+    </div>
+    <div class="thumbs" id="paperThumbs"></div>
+    <div id="paperResult"></div>
+
+    <h2>パドックの写真・動画で評価する</h2>
+    <p class="hint">馬を選んでその馬の写真・動画を読み込むか、「全頭」でパドック全体の動画を読み込みます（ゼッケン番号で見分けます）。動画は数枚の場面に分けて評価します。AI の評価は参考値として予想に少し反映されます。自分の目で見た評価は出走表の「パドック」欄（A〜E）へ。</p>
+    <div class="btn-row">
+      <label class="field">対象<select id="paddockTarget"></select></label>
+      <label class="file-btn">写真・動画を選ぶ<input type="file" id="paddockFiles" accept="image/*,video/*" multiple hidden></label>
+      <button type="button" id="paddockRunBtn" disabled>評価する</button>
+      <span class="status" id="paddockStatus"></span>
+    </div>
+    <div class="thumbs" id="paddockThumbs"></div>
+    <div id="paddockResult"></div>
+  </section>
+
+  <!-- 予想 -->
+  <section class="tab card hidden" id="tab-predict">
+    <div class="btn-row">
+      <div class="seg" id="modeSeg" role="group" aria-label="予想の方針">
+        <button type="button" data-mode="hit">的中重視</button>
+        <button type="button" data-mode="ana">穴狙い</button>
+      </div>
+      <button type="button" id="predictBtn" class="primary">予想する</button>
+      <span class="status" id="predictStatus"></span>
+    </div>
+    <div id="predictOut"></div>
+  </section>
+
+  <!-- 過去データ -->
+  <section class="tab card hidden" id="tab-data">
+    <h2>過去のレース結果</h2>
+    <p class="hint">予想は、ここに入っている過去の結果（着順・オッズ・上がり・騎手など）から学習します。CSV で取り込めます（1 行 = 1 頭）。</p>
+    <div class="stats" id="dataStats"></div>
+    <div class="btn-row">
+      <label class="file-btn">CSV を取り込む<input type="file" id="csvFile" accept=".csv,.tsv,.txt,text/csv" multiple hidden></label>
+      <button type="button" id="csvExportBtn" class="ghost">CSV に書き出す</button>
+      <button type="button" id="csvTemplateBtn" class="ghost">CSV のひな形</button>
+      <span class="spacer"></span>
+      <button type="button" id="demoBtn" class="ghost">デモデータを作る</button>
+      <button type="button" id="clearBtn" class="ghost danger">全部削除</button>
+    </div>
+    <details class="help">
+      <summary>CSV の列</summary>
+      <p>1 行目に列名を入れてください（順番は自由。英語名でも可）。</p>
+      <p><code>日付, 区分(中央/地方), 競馬場, R, レース名, 芝ダ, 距離, 馬場, クラス, 馬番, 枠, 馬名, 性齢, 斤量, 騎手, 調教師, 馬体重, 増減, 単勝, 人気, 着順, タイム, 上り, 複勝</code></p>
+      <p>必須は「日付・競馬場・R・馬番・馬名」。着順が入っているレースが学習に使われます。単勝（確定オッズ）と複勝の払戻倍率があると回収率も検証できます。</p>
+    </details>
+    <h3>この日のレース</h3>
+    <div id="dayList"></div>
+  </section>
+
+  <!-- 検証 -->
+  <section class="tab card hidden" id="tab-verify">
+    <h2>過去の結果で検証・学習</h2>
+    <p class="hint">結果の入ったレースを古い順に並べ、前の 7 割で重みを学習し、残り 3 割を「当時の情報だけ」で予想して成績を測ります。1 番人気を買い続けた場合と比べられます。</p>
+    <div class="btn-row">
+      <button type="button" id="btRunBtn">今の重みで検証</button>
+      <button type="button" id="btLearnBtn" class="primary">学習して検証</button>
+      <button type="button" id="applyWBtn" class="ghost" disabled>学習した重みを使う</button>
+      <button type="button" id="resetWBtn" class="ghost">重みを初期値に戻す</button>
+      <span class="status" id="btStatus"></span>
+    </div>
+    <div id="btOut"></div>
+    <h3>重み（どの要素をどれだけ重視するか）</h3>
+    <div class="weights" id="weightsBox"></div>
+  </section>
+
+  <!-- 設定 -->
+  <section class="tab card hidden" id="tab-settings">
+    <h2>AI（写真・動画の読み取り）</h2>
+    <p class="hint">新聞の写真読み取りとパドック評価に Anthropic の Claude API を使います。API キーは <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Claude Console</a> で発行できます（利用料がかかります）。キーはこの端末のブラウザ内にだけ保存されます。共用の端末では保存しないでください。</p>
+    <label class="field wide">API キー<input type="password" id="apiKey" autocomplete="off" placeholder="sk-ant-..."></label>
+    <div class="sel-row">
+      <label class="field">モデル<select id="aiModel">
+        <option value="claude-sonnet-5-5">Claude Sonnet 5.5（標準・安め）</option>
+        <option value="claude-opus-5-5">Claude Opus 5.5（より丁寧）</option>
+        <option value="claude-fable-5-1">Claude Fable 5.1（最高性能・高い）</option>
+      </select></label>
+      <label class="field">読み取りの丁寧さ<select id="aiEffort">
+        <option value="low">速い</option><option value="medium">標準</option><option value="high">丁寧</option>
+      </select></label>
+    </div>
+    <h2>注意</h2>
+    <p class="hint">このツールの予想は過去データから計算した目安です。的中や利益を保証するものではありません。馬券は余裕のある範囲で楽しんでください。</p>
+  </section>
+</main>
+
+<dialog id="pasteDlg">
+  <form method="dialog">
+    <h2>表を貼り付け</h2>
+    <p class="hint">Excel・スプレッドシート・CSV からコピーした表を貼り付けます。1 行目は列名（馬番, 馬名, 騎手, 単勝 など）。</p>
+    <textarea id="pasteText" rows="10"></textarea>
+    <div class="btn-row"><button value="cancel" class="ghost">キャンセル</button><button value="ok" class="primary">取り込む</button></div>
+  </form>
+</dialog>
+
+<dialog id="horseDlg">
+  <form method="dialog">
+    <h2 id="horseDlgTitle"></h2>
+    <div id="horseDlgBody"></div>
+    <div class="btn-row"><button value="close" class="primary">閉じる</button></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="js/app.js?v=20261107-1"></script>
+</body>
+</html>

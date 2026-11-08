@@ -4,7 +4,7 @@ import { csvToRaces, racesToCSV, COLUMNS, parseCSV, normDate, normSurface, parse
 import { FEATURES, DEFAULT_WEIGHTS, predictRace, backtest, learnAll, isFinished } from './model.js';
 import { makeDemo } from './demo.js';
 import * as ai from './ai.js';
-import * as remote from './remote.js';
+import * as remote from './remote.js?v=20261108-1';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];

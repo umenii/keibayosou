@@ -6,7 +6,7 @@ const API = 'https://api.github.com';
 
 function cfg(s) {
   const repo = String(s.ghRepo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
-  return { repo, token: String(s.ghToken || '').trim() };
+  return { repo, token: String(s.ghToken || '').replace(/\s+/g, '') };
 }
 
 export function isConfigured(s) {
@@ -16,24 +16,31 @@ export function isConfigured(s) {
 
 async function gh(s, path, opts = {}) {
   const { repo, token } = cfg(s);
-  const res = await fetch(`${API}/repos/${repo}${path}`, {
-    ...opts,
-    headers: {
-      Accept: opts.method === 'POST' ? 'application/vnd.github+json' : 'application/vnd.github.raw+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      ...(opts.headers || {}),
-    },
-    cache: 'no-store',
-  });
+  // iPad・iPhone の Safari でも通るよう、送るヘッダーは最小限にする（キャッシュ指定や独自ヘッダーを付けない）
+  let res;
+  try {
+    res = await fetch(`${API}/repos/${repo}${path}`, {
+      method: opts.method || 'GET',
+      body: opts.body,
+      headers: {
+        Accept: opts.accept || (opts.method === 'POST' ? 'application/vnd.github+json' : 'application/vnd.github.raw+json'),
+        Authorization: `Bearer ${token}`,
+        ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+    });
+  } catch (e) {
+    throw new Error(`GitHub に接続できませんでした（${e.message}）。通信状況と、トークンに余計な文字が入っていないか確認してください`);
+  }
   if (res.status === 404 && !opts.method) return null;
   if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).message || ''; } catch { /* 本文なし */ }
     const msg = {
       401: 'トークンが正しくないか、期限切れです',
-      403: 'トークンにこの操作の権限がありません',
-      404: 'リポジトリまたはワークフローが見つかりません（名前とトークンの対象リポジトリを確認）',
-    }[res.status] || `GitHub エラー ${res.status}`;
-    throw new Error(msg);
+      403: 'トークンにこの操作の権限がありません（Contents：Read-only が必要。「今すぐ集める」は Actions：Read and write も必要）',
+      404: 'リポジトリが見つかりません（「umenii/keiba」の綴りと、トークンの対象リポジトリに keiba を選んだか確認）',
+    }[res.status] || 'GitHub のエラー';
+    throw new Error(`${msg} [${res.status}${detail ? ` ${detail}` : ''}]`);
   }
   return res;
 }
@@ -80,14 +87,13 @@ function parseTime(t) {
 export async function triggerCollect(s, { dates = '', from = '', to = '', horses = true } = {}) {
   await gh(s, '/actions/workflows/collect.yml/dispatches', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ref: 'main', inputs: { dates, from, to, horses: String(horses) } }),
   });
 }
 
 // 直近の収集の状況
 export async function lastRun(s) {
-  const res = await gh(s, '/actions/workflows/collect.yml/runs?per_page=1', { headers: { Accept: 'application/vnd.github+json' } });
+  const res = await gh(s, '/actions/workflows/collect.yml/runs?per_page=1', { accept: 'application/vnd.github+json' });
   const d = res ? await res.json() : null;
   const r = d && d.workflow_runs && d.workflow_runs[0];
   return r ? { status: r.status, conclusion: r.conclusion, at: r.updated_at, url: r.html_url } : null;

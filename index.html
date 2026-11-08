@@ -7,7 +7,7 @@
 <meta name="description" content="出走表・競馬新聞の写真・パドックの写真や動画と、過去のレース結果から予想する競馬予想ツール">
 <meta name="apple-mobile-web-app-title" content="競馬予想">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=20261107-4">
+<link rel="stylesheet" href="style.css?v=20261108-2">
 </head>
 <body>
 <header class="topbar">
@@ -169,7 +169,7 @@
   <section class="tab card hidden" id="tab-settings">
     <h2>AI（新聞の写真・パドックの読み取り。任意・有料）</h2>
     <p class="hint">新聞の写真読み取りとパドック評価に Anthropic の Claude API を使います。API キーは <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Claude Console</a> で発行できます（利用料がかかります）。キーはこの端末のブラウザ内にだけ保存されます。共用の端末では保存しないでください。</p>
-    <label class="field wide">API キー<input type="password" id="apiKey" autocomplete="off" placeholder="sk-ant-..."></label>
+    <label class="field wide">API キー<input type="password" id="apiKey" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-..."></label>
     <div class="sel-row">
       <label class="field">モデル<select id="aiModel">
         <option value="claude-sonnet-5-5">Claude Sonnet 5.5（標準・安め）</option>
@@ -183,13 +183,17 @@
     <h2>Web から取得（無料・GitHub）</h2>
     <p class="hint">GitHub Actions が Yahoo!スポーツナビ 競馬から集めたデータ（非公開リポジトリに保存）を読み込みます。読み込みには、そのリポジトリを読める GitHub のトークンが必要です（作り方は README）。トークンはこの端末のブラウザ内にだけ保存されます。</p>
     <div class="sel-row">
-      <label class="field">データのリポジトリ<input id="ghRepo" autocomplete="off" placeholder="umenii/keiba"></label>
-      <label class="field wide">GitHub のトークン<input type="password" id="ghToken" autocomplete="off" placeholder="github_pat_..."></label>
+      <label class="field">データのリポジトリ<input id="ghRepo" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="url" placeholder="umenii/keiba"></label>
+      <label class="field wide">GitHub のトークン<input type="text" id="ghToken" class="secret" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="github_pat_..."></label>
     </div>
     <div class="btn-row">
       <button type="button" id="ghTestBtn">接続を確認</button>
       <span class="status" id="ghTestStatus"></span>
     </div>
+    <div class="btn-row">
+      <button type="button" class="ghost" id="ghShareBtn">スマホなど他の端末に設定を送る</button>
+    </div>
+    <p class="hint">接続できた端末でこのボタンを押すと、設定入りのリンクができます（Mac なら AirDrop やメッセージで iPhone に送れます）。受け取った端末でリンクを開くと、トークンを手で入力しなくても設定が入ります。リンクにはトークンが含まれるので、自分の端末以外には送らないでください。</p>
     <label class="check"><input type="checkbox" id="ghAuto"> 日付・競馬場を選んだら自動で読み込む</label>
 
     <h2>注意</h2>
@@ -215,6 +219,6 @@
 </dialog>
 
 <div class="toast" id="toast"></div>
-<script type="module" src="js/app.js?v=20261108-1"></script>
+<script type="module" src="js/app.js?v=20261108-2"></script>
 </body>
 </html>

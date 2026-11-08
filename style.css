@@ -173,3 +173,7 @@ label.check input { min-height: 0; width: 18px; height: 18px; }
 details.ai-fetch { margin-top: 6px; font-size: 13px; }
 details.ai-fetch summary { cursor: pointer; color: var(--muted); }
 details.ai-fetch .btn-row { margin-top: 6px; }
+
+/* トークン欄：パスワード欄にすると iPhone で貼り付けにくいので、文字を伏せるだけにする */
+input.secret { -webkit-text-security: disc; font-family: ui-monospace, monospace; }
+input.secret:focus { -webkit-text-security: none; }

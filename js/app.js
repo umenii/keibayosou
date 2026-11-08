@@ -4,7 +4,7 @@ import { csvToRaces, racesToCSV, COLUMNS, parseCSV, normDate, normSurface, parse
 import { FEATURES, DEFAULT_WEIGHTS, predictRace, backtest, learnAll, isFinished } from './model.js';
 import { makeDemo } from './demo.js';
 import * as ai from './ai.js';
-import * as remote from './remote.js?v=20261108-1';
+import * as remote from './remote.js?v=20261108-2';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -657,11 +657,37 @@ function renderSettings() {
 $('#apiKey').addEventListener('change', () => { S.apiKey = $('#apiKey').value.trim(); save(); toast('保存しました'); });
 $('#aiModel').addEventListener('change', () => { S.aiModel = $('#aiModel').value; save(); });
 $('#aiEffort').addEventListener('change', () => { S.aiEffort = $('#aiEffort').value; save(); });
-$('#ghRepo').addEventListener('change', () => { S.ghRepo = $('#ghRepo').value.trim(); save(); remoteLoaded.clear(); });
-$('#ghToken').addEventListener('change', () => { S.ghToken = $('#ghToken').value.trim(); save(); remoteLoaded.clear(); toast('保存しました'); });
+$('#ghRepo').addEventListener('change', () => { S.ghRepo = remote.cleanRepo($('#ghRepo').value); $('#ghRepo').value = S.ghRepo; save(); remoteLoaded.clear(); });
+$('#ghToken').addEventListener('change', () => { S.ghToken = remote.cleanToken($('#ghToken').value); $('#ghToken').value = S.ghToken; save(); remoteLoaded.clear(); toast('保存しました'); });
+
+// 設定を他の端末に送る（URL の # 以降に入れる。# 以降はサーバーには送られない）
+const b64url = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64url = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)));
+$('#ghShareBtn').addEventListener('click', async () => {
+  if (!remote.isConfigured(S)) { toast('先にこの端末で GitHub の接続を設定してください'); return; }
+  const url = `${location.origin}${location.pathname}#setup=${b64url(JSON.stringify({ ghRepo: S.ghRepo, ghToken: S.ghToken }))}`;
+  try {
+    if (navigator.share) { await navigator.share({ title: '競馬予想ノートの設定', url }); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(url); toast('設定入りのリンクをコピーしました。自分のスマホに送って開いてください', 5000); }
+  catch { prompt('このリンクをコピーして、自分のスマホで開いてください', url); }
+});
+function importSetupFromURL() {
+  const m = location.hash.match(/^#setup=([\w-]+)/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search); // 履歴にトークンを残さない
+  try {
+    const d = JSON.parse(unb64url(m[1]));
+    if (!d.ghToken) return;
+    if (!confirm(`GitHub の接続設定（${d.ghRepo}）をこの端末に保存しますか？`)) return;
+    S.ghRepo = remote.cleanRepo(d.ghRepo); S.ghToken = remote.cleanToken(d.ghToken); S.ghAuto = true; save();
+    toast('接続設定を保存しました');
+  } catch { toast('設定のリンクを読み取れませんでした'); }
+}
 $('#ghAuto').addEventListener('change', () => { S.ghAuto = $('#ghAuto').checked; save(); });
 $('#ghTestBtn').addEventListener('click', async () => {
-  S.ghRepo = $('#ghRepo').value.trim(); S.ghToken = $('#ghToken').value.trim(); save();
+  S.ghRepo = remote.cleanRepo($('#ghRepo').value); S.ghToken = remote.cleanToken($('#ghToken').value); save();
+  $('#ghRepo').value = S.ghRepo; $('#ghToken').value = S.ghToken;
   const st = $('#ghTestStatus');
   if (!remote.isConfigured(S)) { st.textContent = 'リポジトリ（例 umenii/keiba）とトークンを入力してください'; return; }
   st.innerHTML = '<span class="spin"></span>確認中…';
@@ -705,6 +731,7 @@ function saveRaceIfDirty() { if (saveTimer) saveRace(); }
 
 // ---------------- 起動 ----------------
 (async function init() {
+  importSetupFromURL();
   renderSelector(); renderMode(); renderWeights(); renderSettings();
   await loadRace();
   switchTab(S.tab || 'card');

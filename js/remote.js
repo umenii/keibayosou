@@ -4,9 +4,17 @@
 
 const API = 'https://api.github.com';
 
+// スマホのキーボードで紛れやすい違い（全角文字・先頭の大文字・空白）を直す
+export function cleanToken(t) {
+  return String(t || '').normalize('NFKC').replace(/[\s\u200b-\u200d\ufeff]+/g, '')
+    .replace(/^github_pat_/i, 'github_pat_').replace(/^gh([pousr])_/i, (m, c) => `gh${c.toLowerCase()}_`);
+}
+export function cleanRepo(r) {
+  return String(r || '').normalize('NFKC').replace(/\s+/g, '')
+    .replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/, '').replace(/\/+$/, '');
+}
 function cfg(s) {
-  const repo = String(s.ghRepo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
-  return { repo, token: String(s.ghToken || '').replace(/\s+/g, '') };
+  return { repo: cleanRepo(s.ghRepo), token: cleanToken(s.ghToken) };
 }
 
 export function isConfigured(s) {
